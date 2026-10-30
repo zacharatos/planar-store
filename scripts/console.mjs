@@ -4,9 +4,9 @@ import { MODULE_ID, TYPE_ICON, CATEGORY_ICON } from "./constants.mjs";
 import { t, warn, info } from "./i18n.mjs";
 import { setting, setSetting } from "./settings.mjs";
 import {
-  escapeHTML as esc, rowPrice, priceText, parsePrice, coinsText, cleanCoins, fitsType, validatePack, SHOP_TYPES, SECRET_SKILLS
+  escapeHTML as esc, rowPrice, priceText, parsePrice, coinsText, cleanCoins, fitsType, validatePack, SHOP_TYPES, SECRET_SKILLS, describeFx
 } from "./util.mjs";
-import { shops, shop, stockOf, live, ledger, heroes, heroOf, textLang, toggleLanguage, local, typeInfo, importedPack, importPack, resetPack } from "./state.mjs";
+import { shops, shop, stockOf, live, ledger, heroes, heroOf, textLang, toggleLanguage, local, typeInfo, importedPack, importPack, resetPack, eventsOf, eventChanceOf, resolveActor } from "./state.mjs";
 import * as trade from "./trade.mjs";
 import * as stock from "./stock.mjs";
 import { ShopScreen } from "./shop.mjs";
@@ -88,8 +88,8 @@ export class StoreConsole extends ApplicationV2 {
     this.#boundTo = this.element;
     this.element.addEventListener("click", ev => this.#onClick(ev));
     this.element.addEventListener("change", ev => this.#onChange(ev));
-    this.element.addEventListener("dragover", ev => { const z = ev.target.closest(".pst-drop"); if (z) { ev.preventDefault(); z.classList.add("over"); } });
-    this.element.addEventListener("dragleave", ev => ev.target.closest?.(".pst-drop")?.classList.remove("over"));
+    this.element.addEventListener("dragover", ev => { const z = ev.target.closest(".pst-drop, .pst-actor-drop"); if (z) { ev.preventDefault(); z.classList.add("over"); } });
+    this.element.addEventListener("dragleave", ev => ev.target.closest?.(".pst-drop, .pst-actor-drop")?.classList.remove("over"));
     this.element.addEventListener("drop", ev => this.#onDrop(ev));
   }
 
@@ -187,6 +187,7 @@ export class StoreConsole extends ApplicationV2 {
           ${f("description", t("Edit.Description"), local(s.description), { area: true })}
         </fieldset>
         <fieldset><legend>${esc(t("Edit.Owner"))}</legend>
+          ${this.#actorBlock(o)}
           ${f("owner.name", t("Edit.Name"), local(o.name))}
           ${f("owner.nameEn", t("Edit.NameEn"), o.nameEn)}
           ${f("owner.role", t("Edit.Role"), local(o.role))}
@@ -212,6 +213,22 @@ export class StoreConsole extends ApplicationV2 {
         ${btn("reset-edit", "fa-rotate-left", t("Edit.Reset"), `data-id="${s.id}"`)}
         ${btn("cancel-edit", "fa-xmark", t("Edit.Cancel"))}</div>
     </form>`;
+  }
+
+  /** The link between the owner and a world NPC: drop an actor on it, or type a name / UUID. */
+  #actorBlock(o) {
+    const info = o.actor
+      ? (o.linked
+        ? `<img src="${esc(o.img)}" alt=""> <span>${esc(t("Edit.ActorLinked", { name: o.actorName }))}</span>
+           ${btn("actor-open", "fa-address-card", "", `data-ref="${esc(o.actorUuid || o.actor)}"`, "icon", tip(t("Edit.ActorOpen")))}`
+        : `<i class="fa-solid fa-triangle-exclamation"></i> <span>${esc(t("Edit.ActorMissing", { ref: o.actor }))}</span>`)
+      : "";
+    return `<div class="pst-actor">
+      <label class="pst-form-row"><span>${esc(t("Edit.Actor"))}</span><input type="text" name="owner.actor" value="${esc(o.actor ?? "")}" placeholder="${esc(t("Edit.ActorPlaceholder"))}">
+        ${btn("actor-unlink", "fa-link-slash", "", "", "icon", tip(t("Edit.ActorUnlink")))}</label>
+      <div class="pst-actor-drop"><i class="fa-solid fa-user-plus"></i> ${esc(t("Edit.ActorDrop"))}</div>
+      ${info ? `<div class="pst-actor-info">${info}</div>` : ""}
+      <p class="pst-hint">${esc(t("Edit.ActorHint"))}</p></div>`;
   }
 
   #stock() {
@@ -271,19 +288,45 @@ export class StoreConsole extends ApplicationV2 {
           <span class="pst-coins">${esc(coinsText(cleanCoins(a?.system?.currency)))}</span>${secret}
           ${btn("send-out", "fa-person-walking-arrow-right", "", `data-id="${id}" data-user="${uid}"`, "icon", tip(t("Live.SendOut")))}</li>`;
       }).join("");
+      const eventBox = this.#eventBox(s, o);
       const visitEntries = entries.filter(e => e.shopId === id && e.date >= o.since).slice().reverse();
       const recent = visitEntries.length ? visitEntries.map(e => this.#entryLine(e)).join("") : `<li class="pst-hint">${esc(t("Live.NoPurchases"))}</li>`;
       return `<article class="pst-shop is-open pst-type-${s.type}">
         <header><i class="fa-solid ${TYPE_ICON[s.type]} pst-type-icon"></i><div class="pst-shop-title"><strong>${esc(local(s.name))}</strong><small>${esc(t("Live.Since", { time: o.since.slice(11, 16) }))}</small></div>
           <span class="pst-grow"></span>${btn("close", "fa-door-closed", t("Console.Close"), `data-id="${id}"`)}</header>
         <ul class="pst-people">${people}</ul>
+        ${eventBox}
         <h4>${esc(t("Live.ThisVisit"))}</h4><ul class="pst-entries">${recent}</ul>
       </article>`;
     }).join("");
   }
 
+  /** The random event of this visit: what is running, what it does, and the buttons to roll, force or end one. */
+  #eventBox(s, o) {
+    const pool = eventsOf(s);
+    const cur = o.event;
+    const chance = Math.round(eventChanceOf(s) * 100);
+    const gmNote = cur ? local(pool.find(e => e.id === cur.id)?.gm) : "";
+    const running = cur
+      ? `<div class="pst-event-now"><i class="fa-solid ${esc(cur.icon || "fa-bell")}"></i> <strong>${esc(local(cur.title) || cur.id)}</strong>
+          ${describeFx(cur.fx) ? `<small class="pst-fx">${esc(describeFx(cur.fx))}</small>` : ""}
+          ${gmNote ? `<p class="pst-gm-note"><i class="fa-solid fa-eye-slash"></i> ${esc(gmNote)}</p>` : ""}</div>`
+      : `<p class="pst-hint">${esc(t("Live.EventNone"))}</p>`;
+    if (!pool.length) return `<div class="pst-event-box"><h4><i class="fa-solid fa-dice"></i> ${esc(t("Live.Event"))}</h4>${running}<p class="pst-hint">${esc(t("Live.EventNoneDefined"))}</p></div>`;
+    const options = pool.map(e => `<option value="${esc(e.id)}">${esc(local(e.title) || local(e.text) || e.id)}</option>`).join("");
+    return `<div class="pst-event-box"><h4><i class="fa-solid fa-dice"></i> ${esc(t("Live.Event"))}${chance ? ` <small>${esc(t("Live.EventChance", { pct: chance }))}</small>` : ""}</h4>
+      ${running}
+      <div class="pst-actions">
+        ${btn("event-roll", "fa-dice", t("Live.EventRandom"), `data-id="${s.id}"`)}
+        <select name="event-pick" data-id="${s.id}"><option value="">${esc(t("Live.EventPick"))}</option>${options}</select>
+        ${btn("event-trigger", "fa-bolt", t("Live.EventTrigger"), `data-id="${s.id}"`)}
+        ${cur ? btn("event-clear", "fa-xmark", t("Live.EventClear"), `data-id="${s.id}"`) : ""}
+      </div></div>`;
+  }
+
   #entryLine(e) {
     const time = String(e.date ?? "").slice(11, 16);
+    if (e.kind === "event") return `<li class="pst-entry"><span class="pst-time">${time}</span> <i class="fa-solid fa-dice"></i> ${esc(e.title || e.eventId)}${e.auto ? ` <em>(${esc(t("Live.EventAuto"))})</em>` : ""} <small>${esc(e.shopName)}</small></li>`;
     if (e.kind === "secret") return `<li class="pst-entry"><span class="pst-time">${time}</span> <strong>${esc(e.actorName)}</strong> · ${esc(skillLabel(e.skill))} ${e.total} vs DC ${e.dc} ${e.result === "open" ? "✓" : "✗"} <small>${esc(e.shopName)}</small></li>`;
     if (e.kind === "gm") return `<li class="pst-entry"><span class="pst-time">${time}</span> <strong>${esc(e.actorName)}</strong> · ${esc(t(e.result === "open" ? "Live.GMOpened" : "Live.GMLocked"))} <small>${esc(e.shopName)}</small></li>`;
     const what = (e.lines ?? []).map(x => `${x.n > 1 ? `${x.n}× ` : ""}${x.name}`).join(", ");
@@ -338,6 +381,21 @@ export class StoreConsole extends ApplicationV2 {
       case "secret-forget": return trade.setSecret(id, el.dataset.actor, null);
       case "send-out": return trade.closeShop(id, [el.dataset.user]);
       case "undo": return trade.undo(id);
+      case "event-roll": await trade.rollEvent(id); return this.render();
+      case "event-trigger": {
+        const pick = this.element.querySelector(`select[name="event-pick"][data-id="${id}"]`)?.value;
+        if (!pick) return;
+        await trade.rollEvent(id, { eventId: pick });
+        return this.render();
+      }
+      case "event-clear": await trade.clearEvent(id); return this.render();
+      case "actor-open": return (await resolveActor(el.dataset.ref))?.sheet?.render({ force: true });
+      case "actor-unlink": {
+        const input = el.closest("form")?.querySelector('[name="owner.actor"]');
+        if (input) input.value = "";
+        el.closest(".pst-actor")?.classList.add("unlinked");
+        return;
+      }
     }
   }
 
@@ -360,6 +418,8 @@ export class StoreConsole extends ApplicationV2 {
   }
 
   async #onDrop(ev) {
+    const actorZone = ev.target.closest(".pst-actor-drop");
+    if (actorZone) return this.#dropActor(ev, actorZone);
     const zone = ev.target.closest(".pst-drop");
     if (!zone || !this.#shopId) return;
     ev.preventDefault();
@@ -369,13 +429,27 @@ export class StoreConsole extends ApplicationV2 {
     await stock.addItems(this.#shopId, items, { hidden: zone.dataset.hidden === "true" });
   }
 
+  /** An actor dropped on the owner block: put its UUID in the field (it is saved with the rest of the form). */
+  async #dropActor(ev, zone) {
+    ev.preventDefault();
+    zone.classList.remove("over");
+    const data = dragData(ev);
+    const doc = data?.type === "Actor" && data.uuid ? await fromUuid(data.uuid).catch(() => null) : null;
+    if (!doc) return warn("Edit.NotAnActor");
+    const input = zone.closest("form")?.querySelector('[name="owner.actor"]');
+    if (input) input.value = doc.uuid;
+    zone.querySelector("span")?.remove();
+    zone.insertAdjacentHTML("beforeend", ` <span>${esc(doc.name)}</span>`);
+    zone.closest(".pst-actor")?.classList.remove("unlinked");
+  }
+
   async #saveEdit(form) {
     if (!form) return;
     const id = form.dataset.id;
     const v = name => form.querySelector(`[name="${name}"]`)?.value?.trim() ?? "";
     const patch = {
       name: v("name"), nameEn: v("nameEn"), type: v("type"), place: v("place"), img: v("img"), flair: v("flair"), description: v("description"),
-      owner: { name: v("owner.name"), nameEn: v("owner.nameEn"), role: v("owner.role"), img: v("owner.img"), about: v("owner.about"), gmNotes: v("owner.gmNotes") },
+      owner: { name: v("owner.name"), nameEn: v("owner.nameEn"), role: v("owner.role"), img: v("owner.img"), about: v("owner.about"), gmNotes: v("owner.gmNotes"), actor: v("owner.actor") },
       secret: {
         dc: Number(v("secret.dc")) || 15,
         skills: [...form.querySelectorAll('[name="secret.skill"]:checked')].map(x => x.value),

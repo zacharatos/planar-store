@@ -120,7 +120,7 @@ const rowId = name => api().stock(SHOP).find(r => r.name === name)?.id;
 
 test("registers settings, a keybinding and the enricher on init", () => {
   hooks.once.init();
-  for (const k of ["state", "live", "ledger", "pack", "session", "pageUuid", "partyPurse", "soundscapes", "volume", "textLanguage", "language", "pageName"]) {
+  for (const k of ["state", "live", "ledger", "pack", "session", "pageUuid", "partyPurse", "soundscapes", "volume", "textLanguage", "language", "pageName", "randomEvents"]) {
     assert.ok(registered.settings.includes(`planar-store.${k}`), k);
   }
   assert.deepEqual(registered.keys, ["planar-store.open"]);
@@ -131,7 +131,7 @@ test("registers settings, a keybinding and the enricher on init", () => {
 test("exposes an api on ready and listens on the module socket", async () => {
   await hooks.once.ready();
   assert.deepEqual(registered.sockets, ["module.planar-store"]);
-  for (const fn of ["console", "open", "close", "preview", "shops", "shop", "stock", "addItems", "restock", "setSecret", "undo", "live", "ledger", "pack", "syncPage", "markdown"]) {
+  for (const fn of ["console", "open", "close", "preview", "shops", "shop", "stock", "addItems", "restock", "setSecret", "event", "events", "clearEvent", "undo", "live", "ledger", "pack", "syncPage", "markdown"]) {
     assert.equal(typeof api()[fn], "function", fn);
   }
   assert.equal(api().shops().length, 1, "the sample shop from the shipped pack");
@@ -155,6 +155,7 @@ test("the GM stocks the shop: shelves, the secret shelf, prices by rarity", asyn
 
 test("open for one player; offline players are named; nobody else is inside", async () => {
   settings.set("session", "S03");
+  settings.set("randomEvents", false);   // the shipped pack gives every type a chance: keep the other tests deterministic
   const users = await api().open(SHOP, ["Ilka"]);
   assert.deepEqual(users, ["p1"]);
   assert.deepEqual(api().live().open[SHOP].users, ["p1"]);
@@ -247,6 +248,103 @@ test("leave: the player walks out and the shop closes behind the last one", asyn
   assert.equal(api().live().open[SHOP], undefined);
   const after = await playerAsks("p1", "buy", { shopId: SHOP, basket: [{ rowId: rowId("Shield"), n: 1 }] });
   assert.equal(after.error, "NotInside", "only the GM opens it again");
+});
+
+test("random events: forced, priced, the secret shelf's DC, ended, rolled on opening", async () => {
+  assert.deepEqual(api().events(SHOP).map(e => e.id), ["clearance", "shortage", "delivery"], "the general type's events from the shipped pack");
+  assert.equal((await api().event(SHOP, "clearance")).error, "NotOpen", "nothing happens in a shop nobody is inside");
+  await api().open(SHOP, ["Ilka"]);
+  assert.equal(api().live().open[SHOP].event, null, "randomEvents is off: nothing on opening");
+
+  assert.equal((await api().event(SHOP, "nope")).error, "NoEvents");
+  const res = await api().event(SHOP, "clearance");
+  assert.equal(res.ok, true);
+  const running = api().live().open[SHOP].event;
+  assert.deepEqual([running.id, running.fx], ["clearance", { priceFactor: 0.9 }]);
+  assert.equal(running.gm, undefined, "the GM's note stays out of the data the players read");
+  const entry = api().ledger().entries.at(-1);
+  assert.deepEqual([entry.kind, entry.eventId, entry.auto], ["event", "clearance", false]);
+  assert.ok(toasts.some(([, m]) => m.includes("For you:")), "the GM gets the note");
+
+  // 10 gp shield at ×0.9
+  const paid = await playerAsks("p1", "buy", { shopId: SHOP, basket: [{ rowId: rowId("Shield"), n: 1 }] });
+  assert.equal(paid.ok, true, JSON.stringify(paid));
+  assert.equal(paid.total, 900);
+
+  // delivery: DC 12 → 10
+  await api().event(SHOP, "delivery");
+  const secret = await playerAsks("p1", "secret", { shopId: SHOP, skill: "per", total: 10 });
+  assert.equal(secret.result, "open", "a 10 beats the lowered DC 10");
+  assert.equal(api().ledger().entries.findLast(e => e.kind === "secret").dc, 10);
+
+  // a random roll never repeats the event that is running
+  for (let i = 0; i < 6; i++) {
+    const before = api().live().open[SHOP].event.id;
+    await api().event(SHOP);
+    assert.notEqual(api().live().open[SHOP].event.id, before);
+  }
+  await api().clearEvent(SHOP);
+  assert.equal(api().live().open[SHOP].event, null);
+  const normal = await playerAsks("p1", "buy", { shopId: SHOP, basket: [{ rowId: rowId("Shield"), n: 1 }] });
+  assert.equal(normal.total, 1000, "prices are back to normal");
+
+  // on opening, by the pack's chance
+  await api().close(SHOP);
+  const random = Math.random;
+  try {
+    Math.random = () => 0;
+    settings.set("randomEvents", true);
+    await api().open(SHOP, ["Ilka"]);
+    const auto = api().live().open[SHOP].event;
+    assert.ok(auto, "chance 0.2 and a roll of 0: an event starts");
+    assert.equal(api().ledger().entries.at(-1).auto, true);
+    await api().close(SHOP);
+    settings.set("randomEvents", false);
+    await api().open(SHOP, ["Ilka"]);
+    assert.equal(api().live().open[SHOP].event, null, "the setting turns it off");
+    await api().close(SHOP);
+    settings.set("randomEvents", true);
+    Math.random = () => 0.99;
+    await api().open(SHOP, ["Ilka"]);
+    assert.equal(api().live().open[SHOP].event, null, "a high roll: no event");
+  } finally { Math.random = random; settings.set("randomEvents", false); }
+  await api().close(SHOP);
+  assert.equal(api().live().open[SHOP], undefined);
+});
+
+test("an owner linked to an actor: portrait and name follow the sheet, kept as a copy for the players", async () => {
+  const npc = { id: "n1", uuid: "Actor.n1", documentName: "Actor", name: "Brisa Tolland", type: "npc", img: "actors/brisa.webp" };
+  actors.push(npc);
+  game.actors.push(npc);
+  const itemLookup = globalThis.fromUuid;
+  globalThis.fromUuid = async uuid => (uuid === "Actor.n1" && game.actors.includes(npc) ? npc : itemLookup(uuid));
+  const base = { planarStorePack: 1, types: {}, shops: [{ id: SHOP, type: "general", name: "Store", owner: { img: "pack.webp", actor: "brisa tolland" } }] };
+  settings.set("pack", base);
+  assert.equal(api().shop(SHOP).owner.linked, false, "no copy of the actor yet");
+  await hooks.on.createActor[0]();
+  await new Promise(r => setTimeout(r, 600));
+  let owner = api().shop(SHOP).owner;
+  assert.deepEqual([owner.linked, owner.img, owner.name, owner.actorUuid], [true, "actors/brisa.webp", "Brisa Tolland", "Actor.n1"]);
+
+  npc.img = "actors/brisa-new.webp";
+  npc.name = "Brisa T.";
+  await hooks.on.updateActor.at(-1)(npc, { img: npc.img, name: npc.name });
+  await new Promise(r => setTimeout(r, 600));
+  owner = api().shop(SHOP).owner;
+  assert.deepEqual([owner.img, owner.name], ["actors/brisa-new.webp", "Brisa T."], "the sheet was renamed and got a new picture: so does the shop, the link by name survives through the UUID");
+
+  // by UUID, and a link to an actor that is gone falls back to the pack's picture
+  settings.set("pack", { ...base, shops: [{ ...base.shops[0], owner: { img: "pack.webp", actor: "Actor.n1" } }] });
+  await hooks.on.createActor[0]();
+  await new Promise(r => setTimeout(r, 600));
+  assert.equal(api().shop(SHOP).owner.linked, true);
+  game.actors.splice(game.actors.indexOf(npc), 1);
+  await hooks.on.deleteActor[0]();
+  await new Promise(r => setTimeout(r, 600));
+  owner = api().shop(SHOP).owner;
+  assert.deepEqual([owner.linked, owner.img], [false, "pack.webp"]);
+  settings.set("pack", null);
+  globalThis.fromUuid = itemLookup;
 });
 
 test("toolbar button for the GM only", () => {

@@ -3,7 +3,8 @@
 import { MODULE_ID, DEFAULT_PACK_PATH } from "./constants.mjs";
 import { setting, setSetting } from "./settings.mjs";
 import {
-  normalizeState, normalizeLive, normalizeLedger, shopDef, emptyShopState, pickLanguage, localText, findShop, SHOP_TYPES
+  normalizeState, normalizeLive, normalizeLedger, shopDef, emptyShopState, pickLanguage, localText, findShop, SHOP_TYPES,
+  normalizeChance, eventPool, fold
 } from "./util.mjs";
 
 const clone = v => foundry.utils.deepClone(v);
@@ -47,8 +48,18 @@ export function typeInfo(type) {
   const t = SHOP_TYPES.includes(type) ? type : "general";
   const p = activePack().types?.[t] ?? {};
   const d = defaultPack?.types?.[t] ?? {};
-  return { id: t, name: local(p.name ?? d.name) || t, sound: p.sound || d.sound || "", barks: { ...(d.barks ?? {}), ...(p.barks ?? {}) } };
+  return {
+    id: t, name: local(p.name ?? d.name) || t, sound: p.sound || d.sound || "", barks: { ...(d.barks ?? {}), ...(p.barks ?? {}) },
+    // A pack that lists events for a type replaces the shipped sample events for it (it doesn't mix with them).
+    events: Array.isArray(p.events) ? p.events : Array.isArray(d.events) ? d.events : [],
+    eventChance: normalizeChance(p.eventChance) ?? normalizeChance(d.eventChance)
+  };
 }
+
+/** The events this shop can roll (its type's, then its own), cleaned. */
+export const eventsOf = def => eventPool({ typeEvents: typeInfo(def?.type).events, shopEvents: def?.events ?? [], mode: def?.eventsMode });
+/** The chance (0 to 1) that a random event happens when this shop opens: the shop's, else its type's, else none. */
+export const eventChanceOf = def => def?.eventChance ?? typeInfo(def?.type).eventChance ?? 0;
 
 /* ---------------- shops ---------------- */
 
@@ -141,6 +152,54 @@ export function resolveUsers(list) {
     unknown.push(typeof item === "string" ? item : item?.name ?? String(id));
   }
   return { userIds: [...ids], unknown };
+}
+
+/* ---------------- the owner as an actor ---------------- */
+
+/**
+ * The world actor a shop owner is linked to: `ref` is an actor UUID (world or compendium), an actor id, or a name
+ * (accents and case ignored). Null when there is none.
+ */
+export async function resolveActor(ref) {
+  const r = String(ref ?? "").trim();
+  if (!r) return null;
+  if (/(^|\.)Actor\./.test(r)) {
+    const doc = await fromUuid(r).catch(() => null);
+    return doc?.documentName === "Actor" ? doc : null;
+  }
+  return game.actors.get(r) ?? game.actors.find(a => fold(a.name) === fold(r)) ?? null;
+}
+
+/**
+ * Keep every shop's copy of its owner actor's name and portrait up to date (GM's client only). Players read the
+ * copy, because an NPC they have no permission on may not even be sent to their browser.
+ * Called on ready, after the pack or a shop's owner changes, and when a linked actor is renamed or gets a new picture.
+ */
+export async function syncOwners() {
+  if (!isActiveGM()) return;
+  const st = state();
+  const changes = [];
+  for (const def of shops()) {
+    const ref = def.owner.actor;
+    const cur = st.shops[def.id]?.ownerSnap ?? null;
+    let next = null;
+    if (ref) {
+      // A link by name breaks when the actor is renamed: fall back on the UUID read the last time.
+      const actor = (await resolveActor(ref)) ?? (cur?.ref === ref && cur.uuid ? await resolveActor(cur.uuid) : null);
+      if (actor) next = { ref, uuid: actor.uuid, name: actor.name, img: actor.img ?? "" };
+    }
+    if (JSON.stringify(next) !== JSON.stringify(cur)) changes.push([def.id, next]);
+  }
+  if (!changes.length) return;
+  await serial(async () => { for (const [id, snap] of changes) await writeShop(id, s => { s.ownerSnap = snap; }); });
+}
+
+let syncTimer = null;
+/** syncOwners a moment from now (many actor updates in a row become one pass). */
+export function syncOwnersSoon() {
+  if (!isActiveGM()) return;
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(() => syncOwners().catch(err => console.warn(`${MODULE_ID} | owner sync`, err)), 400);
 }
 
 /* ---------------- pack ---------------- */

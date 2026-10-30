@@ -1,6 +1,8 @@
 import { MODULE_ID } from "./constants.mjs";
 import { registerSettings } from "./settings.mjs";
-import { loadDefaultPack, onLedgerWrite, textLang, shops, shop, stockOf, live, ledger, resolveShop, importedPack } from "./state.mjs";
+import {
+  loadDefaultPack, onLedgerWrite, textLang, shops, shop, stockOf, live, ledger, resolveShop, importedPack, eventsOf, syncOwners, syncOwnersSoon, isActiveGM
+} from "./state.mjs";
 import { loadDictionaries, setLanguageSource, warn } from "./i18n.mjs";
 import { registerSocket } from "./rpc.mjs";
 import * as trade from "./trade.mjs";
@@ -11,8 +13,9 @@ import { schedulePageSync, syncPage, markdown } from "./page.mjs";
 import { registerEnrichers, listenForClicks } from "./enrich.mjs";
 
 let ready = false;
-const refresh = () => {
+const refresh = which => {
   if (!ready) return;
+  if (which === "pack") syncOwnersSoon();   // a new pack may link its owners to other actors
   StoreConsole.instance?.refreshSoon();
   ShopScreen.sync();
 };
@@ -41,6 +44,7 @@ Hooks.once("ready", async () => {
     leave: (userId, data) => trade.onLeave(userId, data)
   });
   listenForClicks();
+  if (isActiveGM()) syncOwners().catch(err => console.warn(`${MODULE_ID} | owner sync`, err));
   const module = game.modules.get(MODULE_ID);
   if (module) module.api = {
     /** The GM console. */
@@ -58,6 +62,11 @@ Hooks.once("ready", async () => {
     addItems: (shopRef, items, opts) => stock.addItems(byName(shopRef), [].concat(items), opts),
     restock: shopRef => stock.restock(byName(shopRef)),
     setSecret: (shopRef, actorId, value) => trade.setSecret(byName(shopRef), actorId, value),
+    /** Make something happen in an open shop: a random event of its type, or the one with this id. */
+    event: (shopRef, eventId = null) => { const id = byName(shopRef); return id ? trade.rollEvent(id, { eventId }) : warn("Notify.NoShop", { name: shopRef }); },
+    /** The events a shop can roll (cleaned), and ending the one that is running. */
+    events: shopRef => eventsOf(shop(byName(shopRef))),
+    clearEvent: shopRef => { const id = byName(shopRef); return id ? trade.clearEvent(id) : warn("Notify.NoShop", { name: shopRef }); },
     undo: entryId => trade.undo(entryId),
     live: () => live(),
     ledger: () => ledger(),
@@ -87,5 +96,8 @@ Hooks.on("getSceneControlButtons", controls => {
 // Coins on a sheet changed, heroes renamed, players came and went: the windows redraw.
 Hooks.on("updateActor", (actor, change) => {
   if (change?.system?.currency || change?.name || change?.img || change?.ownership) refresh();
+  if (change?.name || change?.img) syncOwnersSoon();   // an owner's NPC sheet was renamed or got a new portrait
 });
+Hooks.on("createActor", () => syncOwnersSoon());     // a shop may have been waiting for this NPC
+Hooks.on("deleteActor", () => syncOwnersSoon());
 Hooks.on("userConnected", refresh);

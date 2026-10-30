@@ -238,12 +238,17 @@ export function itemPrice({ value = 0, denomination = "gp", rarity = "", type = 
   return { cp: 0, from: "none" };
 }
 
-/** What a row costs in this shop (override wins), after the shop's multiplier. Null = not for sale. */
-export function rowPrice(row, multiplier = 1) {
+/**
+ * What a row costs in this shop (override wins), after the shop's multiplier and, if one is running, the random
+ * event's price effects (`fx`, see normalizeFx). Null = not for sale. Rounded up to a whole copper; the product is
+ * rounded first so that 100 × 1.1 is 110 and not 111 (floating point gives 110.00000000000001).
+ */
+export function rowPrice(row, multiplier = 1, fx = null) {
   const base = row?.override != null ? Number(row.override) : row?.price;
   if (base == null || !Number.isFinite(Number(base))) return null;
-  const m = Number(multiplier);
-  return Math.ceil(Number(base) * (Number.isFinite(m) && m > 0 ? m : 1));
+  const pos = v => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : 1);
+  const factor = pos(multiplier) * pos(fx?.priceFactor) * pos(fx?.categoryFactors?.[row?.category]);
+  return Math.ceil(Math.round(Number(base) * factor * 1e6) / 1e6);
 }
 
 /* ------------------------------------------------------------------ */
@@ -303,13 +308,39 @@ export function normalizeState(data) {
       stock: (Array.isArray(s.stock) ? s.stock : []).map(normalizeRow).filter(Boolean),
       edit: s.edit && typeof s.edit === "object" ? s.edit : {},
       custom: s.custom && typeof s.custom === "object" ? s.custom : null,
-      visits: Math.max(0, Math.trunc(Number(s.visits) || 0))
+      visits: Math.max(0, Math.trunc(Number(s.visits) || 0)),
+      ownerSnap: normalizeOwnerSnap(s.ownerSnap),
+      lastEvent: typeof s.lastEvent === "string" ? s.lastEvent : ""
     };
   }
   return out;
 }
 
-export const emptyShopState = () => ({ stock: [], edit: {}, custom: null, visits: 0 });
+export const emptyShopState = () => ({ stock: [], edit: {}, custom: null, visits: 0, ownerSnap: null, lastEvent: "" });
+
+/**
+ * The owner's linked NPC actor as the GM's client last read it: { ref, uuid, name, img }. Players can't always read
+ * an actor they have no permission on, so the GM's client copies the name and portrait into the shop's state, and
+ * every screen reads the copy. `ref` is what the pack or the console linked (a UUID or a name).
+ */
+export function normalizeOwnerSnap(snap) {
+  if (!snap || typeof snap !== "object" || !snap.ref || !snap.name) return null;
+  return { ref: String(snap.ref), uuid: String(snap.uuid ?? ""), name: String(snap.name), img: String(snap.img ?? "") };
+}
+
+/** Foundry's blank portrait: a linked actor that still has it falls back to the picture the pack gives. */
+export const isPlaceholderImg = src => /(^|\/)mystery-man\.(svg|webp|png)$/i.test(String(src ?? ""));
+
+const hasText = v => !!localText(v, "en");
+
+/** The owner with the linked actor applied: its portrait always, its name when the pack gives none. */
+export function applyOwnerSnap(owner, snap) {
+  const ref = String(owner?.actor ?? "").trim();
+  const s = normalizeOwnerSnap(snap);
+  if (!ref || !s || s.ref !== ref) return { ...owner, actor: ref, linked: false };
+  const img = s.img && !isPlaceholderImg(s.img) ? s.img : owner.img;
+  return { ...owner, actor: ref, linked: true, actorName: s.name, actorUuid: s.uuid, img: img ?? "", name: hasText(owner.name) ? owner.name : s.name };
+}
 
 /** Restock: every row with a restock number goes back up to it (never down). */
 export function restockRows(rows) {
@@ -319,11 +350,19 @@ export function restockRows(rows) {
 /** What a hero can see: the open shelves, plus the secret one if it's open for them. Out-of-stock rows stay (greyed). */
 export const visibleRows = (rows, secretOpen) => rows.filter(r => !r.hidden || secretOpen);
 
+/** The rows as this visit's random event leaves them: shelves the event ran dry show as sold out (the stock itself is untouched). */
+export function eventRows(rows, fx) {
+  const out = Array.isArray(fx?.outOf) ? fx.outOf : [];
+  return out.length ? rows.map(r => (out.includes(r.category) ? { ...r, qty: 0 } : r)) : rows;
+}
+
 /**
  * Check a basket against the stock. basket = [{ rowId, n }].
  * @returns {{ lines: {rowId, name, n, each, sum, bundle}[], total: number, errors: {code, rowId?, name?}[] }}
  */
-export function checkBasket(rows, basket, { secretOpen = false, multiplier = 1 } = {}) {
+export function checkBasket(allRows, basket, { secretOpen = false, multiplier = 1, event = null } = {}) {
+  const fx = event?.fx ?? null;
+  const rows = eventRows(allRows, fx);
   const errors = [];
   const merged = new Map();
   for (const b of Array.isArray(basket) ? basket : []) {
@@ -337,7 +376,7 @@ export function checkBasket(rows, basket, { secretOpen = false, multiplier = 1 }
     const row = rows.find(r => r.id === rowId);
     if (!row) { errors.push({ code: "Missing", rowId }); continue; }
     if (row.hidden && !secretOpen) { errors.push({ code: "Hidden", rowId, name: row.name }); continue; }
-    const each = rowPrice(row, multiplier);
+    const each = rowPrice(row, multiplier, fx);
     if (each == null) { errors.push({ code: "Priceless", rowId, name: row.name }); continue; }
     if (row.qty != null && row.qty <= 0) { errors.push({ code: "SoldOut", rowId, name: row.name }); continue; }
     if (row.qty != null && row.qty < n) { errors.push({ code: "NotEnough", rowId, name: row.name, left: row.qty }); continue; }
@@ -356,7 +395,7 @@ export function moveStock(rows, lines, sign = -1) {
 /* Who is inside, and the secret shelf                                 */
 /* ------------------------------------------------------------------ */
 
-/** Live data: { open: { shopId: { visit, since, users: [userId], secret: { actorId: "open" | "locked" } } } }. */
+/** Live data: { open: { shopId: { visit, since, users: [userId], secret: { actorId: "open" | "locked" }, event: snapshot|null } } }. */
 export function normalizeLive(data) {
   const out = { schema: STATE_SCHEMA, open: {} };
   const open = data?.open && typeof data.open === "object" ? data.open : {};
@@ -366,7 +405,8 @@ export function normalizeLive(data) {
       visit: String(o.visit ?? ""),
       since: String(o.since ?? ""),
       users: [...new Set((Array.isArray(o.users) ? o.users : []).filter(x => typeof x === "string"))],
-      secret: o.secret && typeof o.secret === "object" ? Object.fromEntries(Object.entries(o.secret).filter(([, v]) => v === "open" || v === "locked")) : {}
+      secret: o.secret && typeof o.secret === "object" ? Object.fromEntries(Object.entries(o.secret).filter(([, v]) => v === "open" || v === "locked")) : {},
+      event: normalizeLiveEvent(o.event)
     };
   }
   return out;
@@ -376,7 +416,7 @@ export function normalizeLive(data) {
 export function openFor(live, shopId, userIds, { visit, since }) {
   const l = normalizeLive(live);
   for (const [id, o] of Object.entries(l.open)) if (id !== shopId) o.users = o.users.filter(u => !userIds.includes(u));
-  const cur = l.open[shopId] ?? { visit, since, users: [], secret: {} };
+  const cur = l.open[shopId] ?? { visit, since, users: [], secret: {}, event: null };
   cur.users = [...new Set([...cur.users, ...userIds])];
   l.open[shopId] = cur;
   for (const [id, o] of Object.entries(l.open)) if (id !== shopId && !o.users.length) delete l.open[id];
@@ -400,6 +440,137 @@ export const shopOfUser = (live, userId) => Object.entries(normalizeLive(live).o
 export const secretResult = (total, dc) => (Number(total) >= Number(dc) ? "open" : "locked");
 
 /* ------------------------------------------------------------------ */
+/* Random events                                                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A random event is something that happens while a shop is open: a headline the players see, a line the owner says,
+ * and optionally effects on the visit. The pack lists them per shop type (`types.<type>.events`) and per shop
+ * (`shops[].events`); the stock itself is never touched, the effects last until the shop closes.
+ *
+ *   { id, weight, icon, title, text, bark, gm, fx: { priceFactor, categoryFactors, outOf, secretDcDelta } }
+ *
+ * title / text / bark / gm are strings or { en, el }; bark can be a list (one line is read out).
+ */
+export const FX_RANGE = { min: 0.1, max: 5 };
+export const DC_DELTA_MAX = 10;
+
+const clampFactor = v => Math.min(FX_RANGE.max, Math.max(FX_RANGE.min, Number(v)));
+const isText = v => (typeof v === "string" && v.trim() !== "") || (v && typeof v === "object" && !Array.isArray(v) && Object.values(v).some(x => typeof x === "string" && x.trim()));
+
+/** Clean the effects of an event: only known keys, numbers in range, no-ops dropped. */
+export function normalizeFx(fx) {
+  const out = {};
+  if (!fx || typeof fx !== "object") return out;
+  const pf = Number(fx.priceFactor);
+  if (Number.isFinite(pf) && pf > 0 && pf !== 1) out.priceFactor = clampFactor(pf);
+  if (fx.categoryFactors && typeof fx.categoryFactors === "object") {
+    const cf = {};
+    for (const [k, v] of Object.entries(fx.categoryFactors)) {
+      const n = Number(v);
+      if (CATEGORIES.includes(k) && Number.isFinite(n) && n > 0 && n !== 1) cf[k] = clampFactor(n);
+    }
+    if (Object.keys(cf).length) out.categoryFactors = cf;
+  }
+  if (Array.isArray(fx.outOf)) {
+    const o = [...new Set(fx.outOf.filter(c => CATEGORIES.includes(c)))];
+    if (o.length) out.outOf = o;
+  }
+  const dd = Math.trunc(Number(fx.secretDcDelta));
+  if (Number.isFinite(dd) && dd !== 0) out.secretDcDelta = Math.max(-DC_DELTA_MAX, Math.min(DC_DELTA_MAX, dd));
+  return out;
+}
+
+/** A list of texts (a string, an { en, el } or a list of those) as a clean list. */
+const textList = v => (Array.isArray(v) ? v : v == null ? [] : [v]).filter(isText);
+
+/** One event from the pack, cleaned; null when it can't be used (no id, nothing to show). */
+export function normalizeEvent(raw) {
+  if (!raw || typeof raw !== "object" || !/^[a-z0-9-]+$/.test(String(raw.id ?? ""))) return null;
+  if (!isText(raw.title) && !isText(raw.text)) return null;
+  const w = Number(raw.weight);
+  return {
+    id: raw.id,
+    weight: Number.isFinite(w) && w > 0 ? Math.min(100, w) : 1,
+    icon: /^fa-[a-z0-9-]+$/.test(String(raw.icon ?? "")) ? raw.icon : "",
+    title: isText(raw.title) ? raw.title : "",
+    text: isText(raw.text) ? raw.text : "",
+    bark: textList(raw.bark),
+    gm: isText(raw.gm) ? raw.gm : "",
+    fx: normalizeFx(raw.fx)
+  };
+}
+
+/**
+ * The events a shop can roll: its type's list, then its own. A shop event with the same id replaces the type's;
+ * `mode: "replace"` ignores the type's list altogether.
+ */
+export function eventPool({ typeEvents = [], shopEvents = [], mode = "add" } = {}) {
+  const list = mode === "replace" ? [...shopEvents] : [...typeEvents, ...shopEvents];
+  const byId = new Map();
+  for (const raw of list) {
+    const e = normalizeEvent(raw);
+    if (e) byId.set(e.id, e);
+  }
+  return [...byId.values()];
+}
+
+/** A weighted pick (rnd in [0, 1) for tests). `exclude` ids are skipped unless nothing else is left. */
+export function pickEvent(pool, { rnd = Math.random(), exclude = [] } = {}) {
+  if (!pool.length) return null;
+  const rest = pool.filter(e => !exclude.includes(e.id));
+  const list = rest.length ? rest : pool;
+  const total = list.reduce((s, e) => s + e.weight, 0);
+  let r = Math.min(Math.max(rnd, 0), 0.999999999) * total;
+  for (const e of list) { r -= e.weight; if (r < 0) return e; }
+  return list.at(-1);
+}
+
+/** A chance from the pack: a number from 0 to 1 (a percentage above 1 is read as one), or null. */
+export function normalizeChance(v) {
+  if (v == null || v === "") return null;
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return n > 1 ? Math.min(1, n / 100) : n;
+}
+
+/** What the live data keeps of the event that is running (everything the screens need, nothing for the GM only). */
+export function eventSnapshot(e, at) {
+  return { id: e.id, at: String(at ?? ""), icon: e.icon, title: e.title, text: e.text, bark: e.bark, fx: e.fx };
+}
+
+export function normalizeLiveEvent(e) {
+  if (!e || typeof e !== "object" || !e.id) return null;
+  return {
+    id: String(e.id),
+    at: String(e.at ?? ""),
+    icon: /^fa-[a-z0-9-]+$/.test(String(e.icon ?? "")) ? e.icon : "",
+    title: isText(e.title) ? e.title : "",
+    text: isText(e.text) ? e.text : "",
+    bark: textList(e.bark),
+    fx: normalizeFx(e.fx)
+  };
+}
+
+/** A price factor as the players read it: 0.8 → "−20%", 1.1 → "+10%". */
+export const fxPercent = f => {
+  const n = Math.round((Number(f) - 1) * 100);
+  return `${n < 0 ? "−" : "+"}${Math.abs(n)}%`;
+};
+
+/** The effects in words for the GM (price × and shelves), e.g. "all ×1.2 · weapons ×0.9 · out: potions · DC -2". */
+export function describeFx(fx) {
+  const f = normalizeFx(fx);
+  const num = n => `×${Number(n.toFixed(2))}`;
+  const parts = [];
+  if (f.priceFactor) parts.push(`all ${num(f.priceFactor)}`);
+  for (const [k, v] of Object.entries(f.categoryFactors ?? {})) parts.push(`${k} ${num(v)}`);
+  if (f.outOf) parts.push(`out: ${f.outOf.join(", ")}`);
+  if (f.secretDcDelta) parts.push(`DC ${f.secretDcDelta > 0 ? "+" : ""}${f.secretDcDelta}`);
+  return parts.join(" · ");
+}
+
+/* ------------------------------------------------------------------ */
 /* The campaign pack                                                   */
 /* ------------------------------------------------------------------ */
 
@@ -421,8 +592,48 @@ export function validatePack(pack) {
     if (!SHOP_TYPES.includes(s.type)) errors.push(`Shop ${label}: type "${s.type}" is not one of ${SHOP_TYPES.join(", ")}.`);
     if (s.secret?.dc != null && !Number.isFinite(Number(s.secret.dc))) errors.push(`Shop ${label}: secret.dc must be a number.`);
     for (const sk of s.secret?.skills ?? []) if (!/^[a-z]{3}$/.test(sk)) errors.push(`Shop ${label}: "${sk}" is not a dnd5e skill id (per, itm, dec…).`);
+    if (s.owner?.actor != null && typeof s.owner.actor !== "string") errors.push(`Shop ${label}: owner.actor must be an actor's name or UUID.`);
+    errors.push(...validateEvents(`Shop ${label}`, s));
   }
-  for (const k of Object.keys(pack.types ?? {})) if (!SHOP_TYPES.includes(k)) errors.push(`Unknown shop type "${k}".`);
+  for (const [k, v] of Object.entries(pack.types ?? {})) {
+    if (!SHOP_TYPES.includes(k)) errors.push(`Unknown shop type "${k}".`);
+    else errors.push(...validateEvents(`Type ${k}`, v));
+  }
+  return errors;
+}
+
+/** Problems with the `events`, `eventChance` and `eventsMode` of a shop or a type in a pack. */
+function validateEvents(label, holder) {
+  const errors = [];
+  if (!holder || typeof holder !== "object") return errors;
+  if (holder.eventChance != null && normalizeChance(holder.eventChance) == null) errors.push(`${label}: eventChance must be a number from 0 to 1 (or a percentage).`);
+  if (holder.eventsMode != null && !["add", "replace"].includes(holder.eventsMode)) errors.push(`${label}: eventsMode must be "add" or "replace".`);
+  if (holder.events == null) return errors;
+  if (!Array.isArray(holder.events)) return [...errors, `${label}: "events" must be a list.`];
+  const seen = new Set();
+  for (const [i, e] of holder.events.entries()) {
+    const id = e?.id ?? `#${i + 1}`;
+    const at = `${label}: event ${id}`;
+    if (!e || typeof e !== "object") { errors.push(`${at} is not an object.`); continue; }
+    if (!/^[a-z0-9-]+$/.test(String(e.id ?? ""))) errors.push(`${at}: "id" must be lower case letters, digits and dashes.`);
+    else if (seen.has(e.id)) errors.push(`${at} appears twice.`);
+    seen.add(e.id);
+    if (!isText(e.title) && !isText(e.text)) errors.push(`${at} needs a title or a text.`);
+    if (e.weight != null && !(Number(e.weight) > 0)) errors.push(`${at}: weight must be more than 0.`);
+    if (e.icon != null && !/^fa-[a-z0-9-]+$/.test(String(e.icon))) errors.push(`${at}: icon must be a Font Awesome name like fa-fire.`);
+    const fx = e.fx;
+    if (fx == null) continue;
+    if (typeof fx !== "object" || Array.isArray(fx)) { errors.push(`${at}: fx must be an object.`); continue; }
+    for (const k of Object.keys(fx)) if (!["priceFactor", "categoryFactors", "outOf", "secretDcDelta"].includes(k)) errors.push(`${at}: unknown effect "${k}".`);
+    if (fx.priceFactor != null && !(Number(fx.priceFactor) > 0)) errors.push(`${at}: priceFactor must be more than 0.`);
+    for (const [c, v] of Object.entries(fx.categoryFactors ?? {})) {
+      if (!CATEGORIES.includes(c)) errors.push(`${at}: "${c}" is not a shelf (${CATEGORIES.join(", ")}).`);
+      else if (!(Number(v) > 0)) errors.push(`${at}: the factor for ${c} must be more than 0.`);
+    }
+    if (fx.outOf != null && !Array.isArray(fx.outOf)) errors.push(`${at}: outOf must be a list of shelves.`);
+    for (const c of Array.isArray(fx.outOf) ? fx.outOf : []) if (!CATEGORIES.includes(c)) errors.push(`${at}: "${c}" is not a shelf (${CATEGORIES.join(", ")}).`);
+    if (fx.secretDcDelta != null && !Number.isFinite(Number(fx.secretDcDelta))) errors.push(`${at}: secretDcDelta must be a number.`);
+  }
   return errors;
 }
 
@@ -446,7 +657,10 @@ export function shopDef(id, packShop, shopState) {
     flair: base.flair ?? "",
     description: base.description ?? "",
     source: base.source ?? "",
-    owner: { name: "", nameEn: "", img: "", role: "", about: "", gmNotes: "", ...(packShop?.owner ?? {}), ...(shopState?.custom?.owner ?? {}), ...(shopState?.edit?.owner ?? {}) },
+    owner: applyOwnerSnap({ name: "", nameEn: "", img: "", role: "", about: "", gmNotes: "", actor: "", ...(packShop?.owner ?? {}), ...(shopState?.custom?.owner ?? {}), ...(shopState?.edit?.owner ?? {}) }, shopState?.ownerSnap),
+    events: Array.isArray(base.events) ? base.events : [],
+    eventsMode: base.eventsMode === "replace" ? "replace" : "add",
+    eventChance: normalizeChance(base.eventChance),
     barks: { ...(packShop?.barks ?? {}), ...(shopState?.custom?.barks ?? {}), ...(shopState?.edit?.barks ?? {}) },
     secret,
     priceMultiplier: Number.isFinite(m) && m > 0 ? m : 1,
@@ -506,6 +720,7 @@ export function pageMarkdown(ledger, L) {
     let what;
     if (e.kind === "secret") what = `${L.secret} (${e.skill} ${e.total} vs DC ${e.dc}) ${e.result === "open" ? "✓" : "✗"}`;
     else if (e.kind === "gm") what = `${L.gm}: ${e.result === "open" ? "✓" : "✗"}`;
+    else if (e.kind === "event") what = `${L.event ?? "event"}: ${e.title || e.eventId}`;
     else what = (e.lines ?? []).map(l => `${l.n > 1 ? `${l.n}× ` : ""}${l.name}`).join(", ");
     const paid = e.kind === "buy" ? `${priceText(e.total)}${e.payer === "party" ? ` ${L.party}` : ""}` : "";
     out.push(`| ${when(e.date)} | ${cell(e.session)} | ${cell(e.actorName)} | ${cell(e.shopName)} | ${e.undone ? "~~" : ""}${cell(what)}${e.undone ? `~~ ${L.undone}` : ""} | ${paid} |`);

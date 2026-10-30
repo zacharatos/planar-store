@@ -8,7 +8,8 @@
       "volume": { "Name": "Shop sound volume", "Hint": "The door-bell and coin sounds, on each player's own machine." },
       "textLanguage": { "Name": "Language (world default)", "Hint": "The language of the shop screens and the console for everyone who hasn't chosen their own.", "Auto": "Follow Foundry's language" },
       "language": { "Name": "Language (yours)", "Hint": "Your own language for this module, whatever the world uses.", "World": "World default" },
-      "pageName": { "Name": "Ledger page name", "Hint": "The journal page with every purchase and secret-shelf roll." }
+      "pageName": { "Name": "Ledger page name", "Hint": "The journal page with every purchase and secret-shelf roll." },
+      "randomEvents": { "Name": "Random shop events", "Hint": "When a shop opens, the chance written in the pack (per shop type or per shop) can start an event: a sale, a shortage, a delivery. Turn off to use only the events you trigger yourself." }
     },
     "Console": {
       "Title": "Planar Store",
@@ -68,6 +69,15 @@
       "Multiplier": "Price ×",
       "Soundscape": "Soundboard soundscape",
       "Sound": "Door sound",
+      "Actor": "NPC actor",
+      "ActorPlaceholder": "Name or UUID of an actor",
+      "ActorDrop": "Drop an NPC from the sidebar here to link it",
+      "ActorLinked": "Linked: {name}",
+      "ActorMissing": "No actor found for \"{ref}\"",
+      "ActorOpen": "Open the actor's sheet",
+      "ActorUnlink": "Unlink the actor",
+      "ActorHint": "A linked actor gives the portrait (and the name, if the owner has none above). Save to apply.",
+      "NotAnActor": "That isn't an actor.",
       "Hint": "Your edits are kept over the pack: re-importing the pack doesn't undo them. Reset goes back to the pack.",
       "Save": "Save",
       "Reset": "Back to the pack",
@@ -108,7 +118,16 @@
       "Since": "open since {time}",
       "ThisVisit": "This visit",
       "GMOpened": "secret shelf opened by the GM",
-      "GMLocked": "secret shelf locked by the GM"
+      "GMLocked": "secret shelf locked by the GM",
+      "Event": "Event",
+      "EventNone": "Nothing has happened this visit.",
+      "EventNoneDefined": "This shop has no events yet: add them to the pack.",
+      "EventRandom": "Random event",
+      "EventPick": "Pick an event…",
+      "EventTrigger": "Trigger",
+      "EventClear": "End the event",
+      "EventChance": "{pct}% when the shop opens",
+      "EventAuto": "on opening"
     },
     "Ledger": {
       "Party": "(party purse)",
@@ -120,6 +139,9 @@
     },
     "Notify": {
       "OnlyGM": "Only the GM can do that.",
+      "NoEvents": "{shop} has no events to roll.",
+      "Event": "{shop}: {title}",
+      "EventGM": "For you: {note}",
       "NoShop": "No shop called \"{name}\".",
       "Unknown": "Not found: {names}",
       "NoPlayers": "Nobody to open it for.",
@@ -188,7 +210,9 @@
       "Unknown": "Unknown request.",
       "BadSkill": "That skill doesn't work here.",
       "BadRoll": "The roll didn't arrive.",
-      "NoEntry": "That purchase can't be undone."
+      "NoEntry": "That purchase can't be undone.",
+      "NotOpen": "That shop isn't open.",
+      "NoEvents": "That shop has no events."
     },
     "Category": {
       "weapons": "Weapons", "armor": "Armour", "shields": "Shields", "ammunition": "Ammunition", "potions": "Potions",
@@ -201,6 +225,7 @@
       "None": "Nothing bought yet.",
       "Secret": "secret shelf",
       "GM": "secret shelf by the GM",
+      "Event": "event",
       "Col": { "when": "When", "session": "Session", "hero": "Hero", "shop": "Shop", "what": "What", "paid": "Paid" }
     },
     "Enricher": { "open": "Open the shop in the Store console", "all": "Open the shop for every player online", "close": "Close the shop" }

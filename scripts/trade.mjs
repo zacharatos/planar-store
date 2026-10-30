@@ -5,11 +5,12 @@ import { MODULE_ID } from "./constants.mjs";
 import { t, warn, info } from "./i18n.mjs";
 import { setting } from "./settings.mjs";
 import {
-  serial, live, shop, shops, stockOf, writeShop, writeLive, writeLedger, ledger, ctx, heroOf, resolveUsers, mutateShop, local
+  serial, live, shop, shops, state, stockOf, writeShop, writeLive, writeLedger, ledger, ctx, heroOf, resolveUsers, mutateShop, local,
+  eventsOf, eventChanceOf, syncOwners
 } from "./state.mjs";
 import {
   checkBasket, moveStock, spendCoins, cleanCoins, coinValue, coinsText, diffCoins, addCoins, toCoins, priceText,
-  openFor, leave as leaveLive, secretResult, addEntry, slug, SHOP_TYPES, SECRET_SKILLS
+  openFor, leave as leaveLive, secretResult, addEntry, slug, SHOP_TYPES, SECRET_SKILLS, pickEvent, eventSnapshot
 } from "./util.mjs";
 
 const atlas = () => {
@@ -37,6 +38,10 @@ export async function openShop(shopId, who = "all") {
     await writeLive(l => openFor(l, shopId, userIds, { visit: foundry.utils.randomID(), since: new Date().toISOString() }));
     if (!wasOpen) await writeShop(shopId, s => { s.visits += 1; });
   });
+  if (!wasOpen && setting("randomEvents")) {
+    const chance = eventChanceOf(def);
+    if (chance > 0 && Math.random() < chance) await rollEvent(shopId, { auto: true });
+  }
   if (!wasOpen && setting("soundscapes") && def.soundscape) {
     try { await globalThis.PlanarSoundboard?.activate?.(def.soundscape); }
     catch (err) { console.warn(`${MODULE_ID} | soundscape`, err); }
@@ -102,7 +107,7 @@ export function buy(userId, data = {}) {
     if (!w.ok) return w;
     const { actor } = w;
     const secretOpen = w.open?.secret?.[actor.id] === "open" || (w.user.isGM && !!data.preview);
-    const chk = checkBasket(stockOf(shopId), data.basket, { secretOpen, multiplier: def.priceMultiplier });
+    const chk = checkBasket(stockOf(shopId), data.basket, { secretOpen, multiplier: def.priceMultiplier, event: w.open?.event });
     if (chk.errors.length) return fail(chk.errors[0].code, { name: chk.errors[0].name ?? "", left: chk.errors[0].left ?? 0 });
 
     const party = !!data.party && partyPurseAvailable();
@@ -216,13 +221,15 @@ export function onSecret(userId, data = {}) {
     if (!skill) return fail("BadSkill");
     const total = Math.trunc(Number(data.total));
     if (!Number.isFinite(total)) return fail("BadRoll");
-    const result = secretResult(total, def.secret.dc);
+    // A random event can make the owner chattier or warier today (secretDcDelta).
+    const dc = Math.max(1, def.secret.dc + (w.open.event?.fx?.secretDcDelta ?? 0));
+    const result = secretResult(total, dc);
     await writeLive(l => { if (l.open[data.shopId]) l.open[data.shopId].secret[w.actor.id] = result; return l; });
     await writeLedger(l => addEntry(l, {
       ...ctx(), kind: "secret", shopId: def.id, shopName: local(def.name), userId, actorId: w.actor.id, actorName: w.actor.name,
-      skill, total, dc: def.secret.dc, result
+      skill, total, dc, result
     }));
-    info(result === "open" ? "Notify.SecretOpen" : "Notify.SecretLocked", { hero: w.actor.name, shop: local(def.name), total, dc: def.secret.dc });
+    info(result === "open" ? "Notify.SecretOpen" : "Notify.SecretLocked", { hero: w.actor.name, shop: local(def.name), total, dc });
     return ok({ result });
   });
 }
@@ -247,6 +254,48 @@ export function setSecret(shopId, actorId, value) {
   });
 }
 
+/* ---------------- random events ---------------- */
+
+/**
+ * Something happens in an open shop (GM). With no `eventId` one of the shop's events is rolled (not the one that
+ * just ran, if there is another); with one, that event is forced. The event lasts until the shop closes.
+ * `auto` = rolled by the chance in the pack when the shop opened (no warning when the shop has no events).
+ */
+export function rollEvent(shopId, { eventId = null, auto = false } = {}) {
+  if (!game.user.isGM) return warn("Notify.OnlyGM");
+  return serial(async () => {
+    const def = shop(shopId);
+    if (!def) return fail("NoShop");
+    const o = live().open[shopId];
+    if (!o) return fail("NotOpen");
+    const pool = eventsOf(def);
+    if (!pool.length) {
+      if (!auto) warn("Notify.NoEvents", { shop: local(def.name) });
+      return fail("NoEvents");
+    }
+    const last = o.event?.id || state().shops[shopId]?.lastEvent;
+    const chosen = eventId ? pool.find(e => e.id === eventId) : pickEvent(pool, { exclude: last ? [last] : [] });
+    if (!chosen) return fail("NoEvents");
+    const title = local(chosen.title) || local(chosen.text) || chosen.id;
+    await writeLive(l => { if (l.open[shopId]) l.open[shopId].event = eventSnapshot(chosen, new Date().toISOString()); return l; });
+    await writeShop(shopId, s => { s.lastEvent = chosen.id; });
+    await writeLedger(l => addEntry(l, { ...ctx(), kind: "event", shopId, shopName: local(def.name), eventId: chosen.id, title, auto }));
+    info("Notify.Event", { shop: local(def.name), title });
+    const gm = local(chosen.gm);
+    if (gm) info("Notify.EventGM", { note: gm });
+    return ok({ eventId: chosen.id });
+  });
+}
+
+/** End the event that is running in a shop (GM). Prices and shelves go back to normal at once. */
+export function clearEvent(shopId) {
+  if (!game.user.isGM) return warn("Notify.OnlyGM");
+  return serial(async () => {
+    await writeLive(l => { if (l.open[shopId]) l.open[shopId].event = null; return l; });
+    return ok();
+  });
+}
+
 /* ---------------- the shops themselves ---------------- */
 
 /** A new hand-made shop (GM). Returns its id. */
@@ -262,8 +311,8 @@ export async function createShop({ name, type = "general" } = {}) {
 }
 
 /** Change a shop's fields (GM). Nested owner / secret / barks are merged. Stored as edits over the pack. */
-export function editShop(id, patch = {}) {
-  return mutateShop(id, s => {
+export async function editShop(id, patch = {}) {
+  await mutateShop(id, s => {
     const e = s.edit ?? {};
     for (const [k, v] of Object.entries(patch)) {
       if (["owner", "secret", "barks"].includes(k) && v && typeof v === "object") e[k] = { ...(e[k] ?? {}), ...v };
@@ -271,10 +320,14 @@ export function editShop(id, patch = {}) {
     }
     s.edit = e;
   });
+  if (patch.owner && "actor" in patch.owner) await syncOwners();   // the owner's name and portrait follow the linked actor
 }
 
 /** Forget the GM's edits (back to the pack's text). Stock stays. */
-export const resetEdits = id => mutateShop(id, s => { s.edit = {}; });
+export async function resetEdits(id) {
+  await mutateShop(id, s => { s.edit = {}; });
+  await syncOwners();
+}
 
 /** Delete a hand-made shop, or empty a pack shop's stock and edits (GM). */
 export async function deleteShop(id) {

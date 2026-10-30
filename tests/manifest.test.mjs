@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { MODULE_ID } from "../scripts/constants.mjs";
-import { CATEGORIES, SHOP_TYPES } from "../scripts/util.mjs";
+import { CATEGORIES, SHOP_TYPES, validatePack } from "../scripts/util.mjs";
 
 const manifest = JSON.parse(readFileSync(new URL("../module.json", import.meta.url), "utf8"));
 const file = p => new URL(`../${p}`, import.meta.url);
@@ -68,7 +68,7 @@ test("every localization key used in the code exists", () => {
   for (const f of ["item", "rarity", "none", "priceless"]) assert.ok(known.has(`Stock.From.${f}`), f);
   for (const v of ["open", "all", "close"]) assert.ok(known.has(`Enricher.${v}`), v);
   const errors = ["Empty", "Missing", "Hidden", "Priceless", "SoldOut", "NotEnough", "TooPoor", "TooPoorParty", "ItemGone", "NoShop", "NoUser",
-    "NotInside", "NoHero", "NoGM", "NoReply", "Failed", "Unknown", "BadSkill", "BadRoll", "NoEntry"];
+    "NotInside", "NoHero", "NoGM", "NoReply", "Failed", "Unknown", "BadSkill", "BadRoll", "NoEntry", "NotOpen", "NoEvents"];
   for (const e of errors) assert.ok(known.has(`Error.${e}`), e);
   for (const [, code] of sources.matchAll(/fail\("(\w+)"/g)) assert.ok(errors.includes(code), `Error.${code} is in the list`);
 });
@@ -76,6 +76,13 @@ test("every localization key used in the code exists", () => {
 test("the shipped pack names every shop type in both languages and is valid", () => {
   const pack = JSON.parse(readFileSync(file("data/default-pack.json"), "utf8"));
   for (const s of SHOP_TYPES) assert.ok(pack.types[s]?.name?.en && pack.types[s]?.name?.el, s);
+  assert.deepEqual(validatePack(pack), []);
+  // The shipped sample events are two-language and every type has some.
+  for (const s of SHOP_TYPES) {
+    const events = pack.types[s]?.events ?? [];
+    assert.ok(events.length >= 3, `${s} has sample events`);
+    for (const e of events) assert.ok(e.title?.en && e.title?.el && e.text?.en && e.text?.el, `${s}/${e.id} is in both languages`);
+  }
 });
 
 test("the repo ships no campaign or publisher content", () => {

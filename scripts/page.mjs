@@ -13,6 +13,7 @@ export function markdown() {
     none: t("Page.None"),
     secret: t("Page.Secret"),
     gm: t("Page.GM"),
+    event: t("Page.Event"),
     party: t("Ledger.Party"),
     undone: t("Ledger.Undone"),
     cols: Object.fromEntries(["when", "session", "hero", "shop", "what", "paid"].map(c => [c, t(`Page.Col.${c}`)]))

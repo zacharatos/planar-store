@@ -2,11 +2,17 @@
   "planarStorePack": 1,
   "id": "default",
   "name": { "en": "Sample shop", "el": "Δείγμα μαγαζιού" },
-  "description": "Ships with the module: type names and a few generic lines per shop type, plus one sample shop. Import your own pack for your campaign.",
+  "description": "Ships with the module: type names, a few generic lines and sample random events per shop type, plus one sample shop. Import your own pack for your campaign.",
   "types": {
     "general": {
       "name": { "en": "General Goods", "el": "Γενικό Εμπόριο" },
       "sound": "sounds/notify.wav",
+      "eventChance": 0.2,
+      "events": [
+        {"id": "clearance", "icon": "fa-tags", "weight": 2, "title": {"en": "Clearance day", "el": "Μέρα εκπτώσεων"}, "text": {"en": "Chalk on a board by the door: everything must go. Prices are lower across the shop.", "el": "Γράμματα με κιμωλία στον πίνακα της πόρτας: όλα πρέπει να φύγουν. Οι τιμές είναι χαμηλότερες σε όλο το μαγαζί."}, "bark": [{"en": "Everything must go, friends!", "el": "Όλα πρέπει να φύγουν, φίλοι μου!"}], "gm": {"en": "A good moment for a first purchase. It lasts only while the shop stays open.", "el": "Καλή στιγμή για μια πρώτη αγορά. Κρατά όσο μένει ανοιχτό το μαγαζί."}, "fx": {"priceFactor": 0.9}},
+        {"id": "shortage", "icon": "fa-box-open", "weight": 2, "title": {"en": "A shortage", "el": "Έλλειψη"}, "text": {"en": "A cart didn't arrive this week. Food and supplies are scarce and dearer.", "el": "Ένα κάρο δεν ήρθε αυτή την εβδομάδα. Τα τρόφιμα και τα εφόδια σπανίζουν και ακριβαίνουν."}, "bark": [{"en": "Don't ask about the rations. Don't.", "el": "Μη ρωτάς για τις μερίδες. Μη ρωτάς."}], "fx": {"categoryFactors": {"food": 1.5, "gear": 1.2}, "outOf": ["food"]}},
+        {"id": "delivery", "icon": "fa-truck", "weight": 1, "title": {"en": "A fresh delivery", "el": "Φρέσκια παράδοση"}, "text": {"en": "Crates are being unloaded at the back, and the shopkeeper is in a talkative mood.", "el": "Ξεφορτώνουν κιβώτια στο πίσω μέρος και ο μαγαζάτορας έχει όρεξη για κουβέντα."}, "bark": [{"en": "Just in! You're lucky, you came today.", "el": "Μόλις ήρθαν! Τυχερός που ήρθες σήμερα."}], "gm": {"en": "The owner is chatty: the secret shelf is a little easier to reach.", "el": "Ο ιδιοκτήτης είναι ομιλητικός: το κρυφό ράφι είναι λίγο πιο εύκολο."}, "fx": {"secretDcDelta": -2}}
+      ],
       "barks": {
         "enter": [{ "en": "Come in, come in. Mind the step.", "el": "Περάστε, περάστε. Προσοχή στο σκαλί." }],
         "again": [{ "en": "Back again? Good.", "el": "Πάλι εδώ; Ωραία." }],
@@ -20,6 +26,12 @@
     "blacksmith": {
       "name": { "en": "Blacksmith", "el": "Σιδηρουργείο" },
       "sound": "sounds/notify.wav",
+      "eventChance": 0.2,
+      "events": [
+        {"id": "forge-roaring", "icon": "fa-fire", "weight": 2, "title": {"en": "The forge is roaring", "el": "Το καμίνι βρυχάται"}, "text": {"en": "Fresh work off the anvil and a smith in a good mood. Weapons are cheaper today.", "el": "Φρέσκια δουλειά από το αμόνι κι ο σιδεράς έχει κέφια. Σήμερα τα όπλα είναι φθηνότερα."}, "bark": [{"en": "Still hot! Take it before it cools.", "el": "Ακόμα καυτό! Πάρ' το πριν κρυώσει."}], "fx": {"categoryFactors": {"weapons": 0.85}}},
+        {"id": "big-order", "icon": "fa-truck", "weight": 2, "title": {"en": "A big order", "el": "Μεγάλη παραγγελία"}, "text": {"en": "A patrol bought out the ammunition and the smith is working on the rest. Prices crept up.", "el": "Μια περίπολος αγόρασε όλα τα βέλη κι ο σιδεράς δουλεύει τα υπόλοιπα. Οι τιμές ανέβηκαν."}, "bark": [{"en": "Arrows? Gone. Ask me next week.", "el": "Βέλη; Τελείωσαν. Ρώτα με την άλλη εβδομάδα."}], "fx": {"priceFactor": 1.1, "outOf": ["ammunition"]}},
+        {"id": "slow-day", "icon": "fa-hourglass-half", "weight": 1, "title": {"en": "A slow day", "el": "Αργή μέρα"}, "text": {"en": "The bellows are quiet and the smith has time to talk about the trade.", "el": "Τα φυσερά σιωπούν κι ο σιδεράς έχει χρόνο να μιλήσει για τη δουλειά."}, "bark": [{"en": "Pull up a stool. I've time today.", "el": "Κάτσε σε ένα σκαμνί. Σήμερα έχω χρόνο."}], "gm": {"en": "Easier to ask about the special pieces under the counter.", "el": "Πιο εύκολο να ρωτήσουν για τα ξεχωριστά κομμάτια κάτω από τον πάγκο."}, "fx": {"secretDcDelta": -2}}
+      ],
       "barks": {
         "enter": [{ "en": "Don't touch the anvil.", "el": "Μην αγγίζεις το αμόνι." }],
         "again": [{ "en": "Something broke already?", "el": "Έσπασε κιόλας κάτι;" }],
@@ -33,6 +45,12 @@
     "alchemist": {
       "name": { "en": "Alchemist", "el": "Αλχημιστής" },
       "sound": "sounds/notify.wav",
+      "eventChance": 0.2,
+      "events": [
+        {"id": "fresh-batch", "icon": "fa-flask", "weight": 2, "title": {"en": "A fresh batch", "el": "Φρέσκια παρτίδα"}, "text": {"en": "Something green has just stopped bubbling. Potions are cheaper while the batch lasts.", "el": "Κάτι πράσινο μόλις σταμάτησε να φουσκώνει. Τα φίλτρα είναι φθηνότερα όσο κρατά η παρτίδα."}, "bark": [{"en": "Still warm! Mind the cork.", "el": "Ακόμα ζεστό! Πρόσεχε το φελλό."}], "fx": {"categoryFactors": {"potions": 0.85}}},
+        {"id": "missing-ingredient", "icon": "fa-seedling", "weight": 2, "title": {"en": "A missing ingredient", "el": "Λείπει ένα υλικό"}, "text": {"en": "The herb merchant failed to show up. Potions are scarce and the rest costs more.", "el": "Ο έμπορος βοτάνων δεν εμφανίστηκε. Τα φίλτρα σπανίζουν και τα υπόλοιπα κοστίζουν περισσότερο."}, "bark": [{"en": "I'm out of that, and I'm in a mood.", "el": "Έχω ξεμείνει, και δεν είμαι στα καλύτερά μου."}], "fx": {"priceFactor": 1.15, "outOf": ["potions"]}},
+        {"id": "fumes", "icon": "fa-smog", "weight": 1, "title": {"en": "Strange fumes", "el": "Περίεργοι ατμοί"}, "text": {"en": "A purple haze hangs under the ceiling and the alchemist talks a little too freely.", "el": "Μια μωβ καταχνιά κρέμεται στο ταβάνι κι ο αλχημιστής μιλά λίγο πιο ελεύθερα απ' όσο πρέπει."}, "bark": [{"en": "Don't breathe too deep. Or do. I won't tell.", "el": "Μην αναπνέεις βαθιά. Ή κάνε το. Δεν θα το πω."}], "gm": {"en": "A loose tongue: the secret shelf is much easier to reach.", "el": "Λυμένη γλώσσα: το κρυφό ράφι είναι πολύ πιο εύκολο."}, "fx": {"secretDcDelta": -3}}
+      ],
       "barks": {
         "enter": [{ "en": "Careful. Some of these bite.", "el": "Προσεκτικά. Μερικά δαγκώνουν." }],
         "again": [{ "en": "Still breathing? Wonderful.", "el": "Ακόμα ζωντανός; Υπέροχα." }],

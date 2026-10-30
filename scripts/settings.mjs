@@ -26,6 +26,7 @@ export function registerSettings({ onChange } = {}) {
 
   world("partyPurse", Boolean, true, { onChange: () => onChange?.("live") });
   world("soundscapes", Boolean, true);
+  world("randomEvents", Boolean, true);
   world("volume", Number, 0.7, { range: { min: 0, max: 1, step: 0.05 } });
   world("textLanguage", String, "auto", { choices: {
     auto: "PLANAR_STORE.Settings.textLanguage.Auto", en: "English", el: "Ελληνικά"

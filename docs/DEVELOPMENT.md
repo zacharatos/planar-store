@@ -12,15 +12,17 @@ scripts/
   util.mjs               pure helpers (no Foundry globals), all unit-tested: text and language, coins (copper, change-making),
                          item categories and prices (DMG value by rarity), stock rows, the basket check, who is inside
                          (open / leave / one shop per player), the secret-shelf result, packs and shop definitions, the ledger
-                         and its Markdown page
+                         and its Markdown page; random events (normalizeFx / normalizeEvent / eventPool / pickEvent,
+                         price factors in rowPrice, eventRows) and the owner's linked actor (applyOwnerSnap)
   state.mjs              serial() (one write at a time), the shops (shipped pack < imported pack < hand-made < the GM's edits),
-                         stock, live, ledger, heroes and users, language
+                         stock, live, ledger, heroes and users, language, the owner's actor (resolveActor, syncOwners)
   rpc.mjs                the socket: players ask (buy / secret / leave), the active GM answers
   trade.mjs              GM side: open and close shops (+ Soundboard soundscape), buy (all or nothing, rollback), undo,
-                         the secret shelf (rolls and by hand), create / edit / delete shops
+                         the secret shelf (rolls and by hand), random events (rollEvent / clearEvent, a roll on opening),
+                         create / edit / delete shops
   stock.mjs              item snapshots, drops (an Item or an Items folder), rows, restock
-  shop.mjs               the full-screen shop (plain DOM + CSS): place, owner, shelves, secret shelf, basket; follows the
-                         `live` setting; the GM's preview
+  shop.mjs               the full-screen shop (plain DOM + CSS): place, owner, event banner, shelves, secret shelf, basket;
+                         follows the `live` setting; the GM's preview; keeps itself under any window opened above it (roll dialog)
   console.mjs            GM console (ApplicationV2): Shops, Stock, Live, Ledger
   page.mjs               the "Purchases" journal page (a Planar Codex note when the Codex is active)
   enrich.mjs             @Shop[Name], @Shop[Name | all], @Shop[Name | close] (GM buttons)
@@ -41,12 +43,14 @@ There is no build step: Foundry loads `scripts/main.mjs` directly.
 - **Opening a shop** writes `live.open[shopId] = { visit, since, users, secret }`. Every client hears the setting change; `ShopScreen.sync()` opens the screen for the users listed and closes it for anyone removed. A player in one shop who is sent to another leaves the first. *Leave* asks the GM to remove the user (and the browser remembers it left that visit, so a reload doesn't pull it back in). The shop closes when the last one leaves.
 - **A purchase** (`trade.buy`): check the basket against the stock (`checkBasket`: hidden rows need the secret shelf open for that hero this visit), check the coins (`spendCoins`), then copy each item from its UUID onto the sheet (stacking onto the same item unless it's armour or a container; `flags.planar-store.source` marks the copy), pay (the actor's currency, or the Atlas purse through its API), lower the stock, write the ledger. Any failure takes the items back off and changes nothing else.
 - **Undo** takes off only what that purchase added (a later purchase stacked onto the same item stays), gives the coins back (the same coins if possible) and the stock.
+- **Random events.** `trade.rollEvent(shopId, { eventId?, auto? })` picks from `eventsOf(shop)` (the type's events from the pack, then the shop's; a pack list replaces the shipped sample for that type), snapshots the event into `live.open[shop].event`, notes `lastEvent` and the ledger. `openShop` rolls one by `eventChance` when a shop opens, if the `randomEvents` setting is on. Prices go through `rowPrice(row, multiplier, fx)`, shelves through `eventRows`, the secret DC through `fx.secretDcDelta`; the stock rows are never written.
+- **The secret roll dialog.** The shop screen sits at z-index 9000, above Foundry's windows. While a framed ApplicationV2 window (the dnd5e roll dialog) is open, `ShopScreen` drops itself to just under it (`watchWindows`/`liftFor`), and comes back when the last one closes; `rollSecret` also falls back to z-index 50 if the dialog hasn't shown after 800 ms.
 - **The secret shelf.** The player rolls with `actor.rollSkill` on their own client (private to GM and roller if the pack says so) and sends the total; the GM's client compares it with the DC and writes `open` or `locked` for that hero into `live`. A second ask in the same visit gets the same answer. The GM can set it by hand.
 - **Data.**
-  - `state = { schema, shops: { id: { stock: [row], edit: {}, custom: def|null, visits } } }`
+  - `state = { schema, shops: { id: { stock: [row], edit: {}, custom: def|null, visits, ownerSnap: {ref, uuid, name, img}|null, lastEvent } } }`. `ownerSnap` is the GM client's copy of the owner's linked actor (players may not be able to read the actor); `syncOwners()` refreshes it on ready, when a pack or an owner changes and when an actor is renamed / re-pictured.
   - Row: `{ id, uuid, name, img, type, subtype, rarity, category, price (cp), priceFrom, override (cp|null), bundle, qty (null = ∞), restock, hidden, desc }`
-  - `live = { schema, open: { shopId: { visit, since, users: [userId], secret: { actorId: "open"|"locked" } } } }`
-  - `ledger = { schema, entries: [...] }` (last 500): `buy { lines, total, payer, paid, created: [{id, qty}], stacked: [{id, add}], undone }`, `secret { skill, total, dc, result }`, `gm { result }`.
+  - `live = { schema, open: { shopId: { visit, since, users: [userId], secret: { actorId: "open"|"locked" }, event: { id, at, icon, title, text, bark, fx }|null } } }`. The running event is a snapshot without the GM note; `fx` = `{ priceFactor, categoryFactors, outOf, secretDcDelta }`. It lives and dies with the visit.
+  - `ledger = { schema, entries: [...] }` (last 500): `buy { lines, total, payer, paid, created: [{id, qty}], stacked: [{id, add}], undone }`, `secret { skill, total, dc, result }`, `gm { result }`, `event { eventId, title, auto }`.
   - Pack: see the README. A shop definition is the pack's shop, then a hand-made shop's fields, then the GM's edits (`shopDef`).
 
 ## Run the checks
@@ -100,6 +104,18 @@ Reload the browser (F5) after each change. Use a second (and third) browser logg
 - A shop with secret items shows the lock tab and the button under the owner. A shop without them shows neither.
 - *Got anything… special?* → pick a skill → dnd5e's roll dialog → roll. Pass: the tab *Under the counter* opens with its items for that hero only; the others still see the lock. Fail: "Not today."; no second try this visit. The GM sees both in Live (open / lock / forget by hand) and the ledger.
 - Close and reopen the shop (a new visit): they can ask again.
+- **The roll dialog opens above the shop** (a player, shop open full screen): the dialog is on top, you can click *Roll*; when it closes the shop is on top again. Try it with a second window open too (a character sheet): the shop stays under both until both are closed.
+
+**Random events**
+- Console → Live, a shop that is open → *Event*: *Random event* shows a banner on the players' screens (headline, text, a chip per price change or sold-out shelf) and the owner may say a line; the GM gets a toast with the GM note. The prices on the cards change (the old price is struck through) and a sold-out shelf is greyed out. *Pick an event… + Trigger* forces one; *End the event* puts everything back at once.
+- A purchase during an event costs what the card says; undo gives back exactly what was paid.
+- With `eventChance` on a type in the pack: open a shop a few times (close it in between); sometimes an event starts on its own. Turn the world setting *Random shop events* off: it never does.
+- A shop with no events (a pack type with none): *Random event* says so.
+
+**The owner as an actor**
+- Edit a shop → *NPC actor*: drop an NPC from the Actors sidebar on the box (its UUID appears), *Save*: the shop's portrait is the actor's. Rename the actor or change its picture: the shop follows within a second, also on a player's screen.
+- A player with no permission on that actor still sees the portrait. Right-click the portrait on your own preview: the actor's sheet opens. Unlink (the broken-link button) and save: back to the pack's picture.
+- A pack that links by name (`"actor": "Bram"`): after the import the portrait appears once the GM is online; a name that matches nothing is shown as "No actor found" in the edit form.
 
 **Page and language**
 - The "Purchases" page appears (Codex note with Planar Codex, otherwise a GM-only page in "Planar Store") and updates ~2 s after each purchase or roll.
@@ -110,6 +126,7 @@ Reload the browser (F5) after each change. Use a second (and third) browser logg
 
 - **New user-facing text:** add the key to `lang/en.json` and `lang/el.json`. The language test fails if they differ.
 - **A new shop type:** add it to `SHOP_TYPES` and `TYPE_CATEGORIES` (util.mjs), `TYPE_ICON` (constants.mjs), the shipped pack (name and lines in both languages) and its `ps-type-<id>` rules in the CSS.
+- **A new event effect:** add the key to `normalizeFx` (clean and clamp), `validateEvents` (the list of known keys), `describeFx` (the GM's line), and wherever it acts (`rowPrice`, `eventRows`, `checkBasket`, `onSecret`…); the banner chips are in `ShopScreen.eventHTML`. Test it in `util.test.mjs`.
 - **Data shape:** add fields freely (the `normalize*` functions set defaults); a change of meaning bumps `STATE_SCHEMA` with a migration.
 
 ## Versions
