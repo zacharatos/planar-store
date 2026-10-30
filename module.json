@@ -1,0 +1,38 @@
+{
+  "id": "planar-store",
+  "title": "Planar Store",
+  "description": "Shops the players walk into. The GM opens a shop full-screen for the players he chooses: the place, the owner, shelves with limited stock, a secret shelf behind a Charisma check, and a basket. Buying moves the item to the hero's sheet, takes the coins with change made, and lowers the stock on every screen at once. General goods, blacksmith and alchemist, each with its own look; stock from any item or compendium; prices from the item or by rarity; undo; a journal page of every purchase.",
+  "version": "0.1.0",
+  "authors": [
+    { "name": "rkeytech" }
+  ],
+  "compatibility": {
+    "minimum": "14",
+    "verified": "14"
+  },
+  "relationships": {
+    "systems": [
+      { "id": "dnd5e", "type": "system", "compatibility": { "minimum": "6.0.0" } }
+    ],
+    "recommends": [
+      { "id": "planar-codex", "type": "module", "reason": "The ledger page becomes a Codex note that exports to your vault." },
+      { "id": "planar-atlas", "type": "module", "reason": "Heroes can pay from the party's common purse." },
+      { "id": "planar-soundboard", "type": "module", "reason": "A shop can switch the soundscape when it opens." }
+    ]
+  },
+  "esmodules": ["scripts/main.mjs"],
+  "socket": true,
+  "styles": ["styles/store.css"],
+  "languages": [
+    { "lang": "en", "name": "English", "path": "lang/en.json" },
+    { "lang": "el", "name": "Ελληνικά", "path": "lang/el.json" }
+  ],
+  "url": "https://github.com/zacharatos/planar-store",
+  "manifest": "https://github.com/zacharatos/planar-store/releases/latest/download/module.json",
+  "download": "https://github.com/zacharatos/planar-store/releases/download/v0.1.0/module.zip",
+  "bugs": "https://github.com/zacharatos/planar-store/issues",
+  "readme": "https://github.com/zacharatos/planar-store#readme",
+  "changelog": "https://github.com/zacharatos/planar-store/blob/main/CHANGELOG.md",
+  "license": "https://github.com/zacharatos/planar-store/blob/main/LICENSE",
+  "flags": {}
+}

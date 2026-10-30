@@ -1,0 +1,63 @@
+{
+  "planarStorePack": 1,
+  "id": "default",
+  "name": { "en": "Sample shop", "el": "Δείγμα μαγαζιού" },
+  "description": "Ships with the module: type names and a few generic lines per shop type, plus one sample shop. Import your own pack for your campaign.",
+  "types": {
+    "general": {
+      "name": { "en": "General Goods", "el": "Γενικό Εμπόριο" },
+      "sound": "sounds/notify.wav",
+      "barks": {
+        "enter": [{ "en": "Come in, come in. Mind the step.", "el": "Περάστε, περάστε. Προσοχή στο σκαλί." }],
+        "again": [{ "en": "Back again? Good.", "el": "Πάλι εδώ; Ωραία." }],
+        "buy": [{ "en": "A fine choice.", "el": "Καλή επιλογή." }, { "en": "Pleasure doing business.", "el": "Χαρά μου." }],
+        "poor": [{ "en": "Come back when your purse is heavier.", "el": "Έλα ξανά όταν βαρύνει το πουγκί σου." }],
+        "soldOut": [{ "en": "That's the last of it, I'm afraid.", "el": "Αυτό ήταν το τελευταίο, δυστυχώς." }],
+        "secretYes": [{ "en": "Well… for you, perhaps.", "el": "Λοιπόν… για σένα, ίσως." }],
+        "secretNo": [{ "en": "I sell what's on the shelves.", "el": "Πουλάω ό,τι βλέπεις στα ράφια." }]
+      }
+    },
+    "blacksmith": {
+      "name": { "en": "Blacksmith", "el": "Σιδηρουργείο" },
+      "sound": "sounds/notify.wav",
+      "barks": {
+        "enter": [{ "en": "Don't touch the anvil.", "el": "Μην αγγίζεις το αμόνι." }],
+        "again": [{ "en": "Something broke already?", "el": "Έσπασε κιόλας κάτι;" }],
+        "buy": [{ "en": "Good steel. It'll outlive you.", "el": "Καλό ατσάλι. Θα σε ζήσει." }],
+        "poor": [{ "en": "Steel costs coin.", "el": "Το ατσάλι θέλει χρήμα." }],
+        "soldOut": [{ "en": "Forge is cooling on that one. Come back later.", "el": "Αυτό το ξαναφτιάχνω. Πέρνα αργότερα." }],
+        "secretYes": [{ "en": "Not everything hangs on the wall.", "el": "Δεν κρέμονται όλα στον τοίχο." }],
+        "secretNo": [{ "en": "What you see is what I make.", "el": "Ό,τι βλέπεις, αυτό φτιάχνω." }]
+      }
+    },
+    "alchemist": {
+      "name": { "en": "Alchemist", "el": "Αλχημιστής" },
+      "sound": "sounds/notify.wav",
+      "barks": {
+        "enter": [{ "en": "Careful. Some of these bite.", "el": "Προσεκτικά. Μερικά δαγκώνουν." }],
+        "again": [{ "en": "Still breathing? Wonderful.", "el": "Ακόμα ζωντανός; Υπέροχα." }],
+        "buy": [{ "en": "Shake before drinking.", "el": "Ανακίνησε πριν το πιεις." }],
+        "poor": [{ "en": "Rare ingredients, rare coin.", "el": "Σπάνια υλικά, σπάνια νομίσματα." }],
+        "soldOut": [{ "en": "That batch is gone.", "el": "Εκείνη η παρτίδα τελείωσε." }],
+        "secretYes": [{ "en": "Lower your voice. Here.", "el": "Χαμήλωσε τη φωνή σου. Ορίστε." }],
+        "secretNo": [{ "en": "I don't know what you mean.", "el": "Δεν ξέρω τι εννοείς." }]
+      }
+    }
+  },
+  "shops": [
+    {
+      "id": "sample-general",
+      "type": "general",
+      "name": { "en": "The Crossroads Store", "el": "Το Μαγαζί του Σταυροδρομιού" },
+      "place": { "en": "By the old road", "el": "Δίπλα στον παλιό δρόμο" },
+      "flair": { "en": "\"If it's not here, you don't need it.\"", "el": "«Ό,τι δεν είναι εδώ, δεν το χρειάζεσαι.»" },
+      "description": { "en": "Shelves to the ceiling, rope and lanterns, sacks of beans, a cat asleep on the counter.", "el": "Ράφια ως το ταβάνι, σχοινιά και φανάρια, σακιά με φασόλια, μια γάτα κοιμάται στον πάγκο." },
+      "owner": {
+        "name": { "en": "The shopkeeper", "el": "Ο μαγαζάτορας" },
+        "role": { "en": "Owner", "el": "Ιδιοκτήτης" },
+        "about": { "en": "Edit this shop in the Store console, or import your own pack.", "el": "Άλλαξε αυτό το μαγαζί στην κονσόλα, ή φέρε το δικό σου πακέτο." }
+      },
+      "secret": { "skills": ["per", "itm", "dec"], "dc": 12 }
+    }
+  ]
+}
